@@ -59,8 +59,8 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/yourusername/explorerStorage.git
-cd explorerStorage
+git clone https://github.com/Kanadeforever/Mine_Exp.git
+cd Mine_Exp
 
 # 2. 安装依赖
 pip install -r requirements.txt
@@ -109,7 +109,7 @@ python main.py
 ## 项目结构
 
 ```
-explorerStorage/
+MineExp/
 ├── main.py                     # 应用入口
 ├── config.ini                  # 用户配置文件
 ├── requirements.txt            # Python 依赖
