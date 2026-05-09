@@ -151,9 +151,9 @@ Three languages are built in:
 
 | Language | File | Code |
 |----------|------|------|
-| 🇨🇳 Simplified Chinese | `language/zh_CN.ini` | zh_CN |
-| 🇬🇧 English | `language/en_US.ini` | en_US |
-| 🇯🇵 Japanese | `language/ja_JP.ini` | ja_JP |
+| Simplified Chinese | `language/zh_CN.ini` | zh_CN |
+| English | `language/en_US.ini` | en_US |
+| Japanese | `language/ja_JP.ini` | ja_JP |
 
 To switch languages, go to **Settings → General** and select your preferred language. No restart required — the change takes effect immediately.
 
