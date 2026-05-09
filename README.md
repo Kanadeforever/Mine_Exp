@@ -109,7 +109,7 @@ Start using the `--console` parameter.
 ## Project Structure
 
 ```
-explorerStorage/
+MineExp/
 ├── main.py                     # Application entry point
 ├── config.ini                  # User configuration file
 ├── requirements.txt            # Python dependencies
