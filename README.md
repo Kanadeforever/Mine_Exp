@@ -71,6 +71,8 @@ python main.py
 
 > **Quick start**: Double-click `run.bat` to launch directly (sets up environment automatically).
 
+**\* Recommand** : It is recommended to use a Python virtual environment.
+
 ---
 
 ## Usage
