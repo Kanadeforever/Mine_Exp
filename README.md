@@ -100,6 +100,10 @@ Right-click the tray icon to access all features:
 
 When enabled (default), the app checks every **5 minutes** for window changes. If changes are detected, a new snapshot is saved automatically. Older auto-saves are pruned to keep only the latest **20** (both configurable in Settings).
 
+### Console
+
+Start using the `--console` parameter.
+
 ---
 
 ## Project Structure
