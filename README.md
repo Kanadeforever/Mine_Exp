@@ -59,8 +59,8 @@
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/explorerStorage.git
-cd explorerStorage
+git clone https://github.com/Kanadeforever/Mine_Exp.git
+cd Mine_Exp
 
 # 2. Install dependencies
 pip install -r requirements.txt
