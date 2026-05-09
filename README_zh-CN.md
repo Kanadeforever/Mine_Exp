@@ -151,9 +151,9 @@ explorerStorage/
 
 | 语言 | 文件 | 代码 |
 |------|------|------|
-| 🇨🇳 简体中文 | `language/zh_CN.ini` | zh_CN |
-| 🇬🇧 English | `language/en_US.ini` | en_US |
-| 🇯🇵 日本語 | `language/ja_JP.ini` | ja_JP |
+| 简体中文 | `language/zh_CN.ini` | zh_CN |
+| English | `language/en_US.ini` | en_US |
+| 日本語 | `language/ja_JP.ini` | ja_JP |
 
 切换语言：进入 **设置 → 常规** 选择所需语言。无需重启，更改立即生效。
 
