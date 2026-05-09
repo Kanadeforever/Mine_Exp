@@ -55,7 +55,7 @@
 
 ---
 
-## 🔧 安装
+## 安装
 
 ```bash
 # 1. 克隆仓库
@@ -69,7 +69,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-> 💡 **快速启动**：直接双击 `run.bat` 即可运行（自动配置环境）。
+> **快速启动**：直接双击 `run.bat` 即可运行（自动配置环境）。
 
 ---
 
