@@ -4,6 +4,22 @@ Mine Exp
 """
 
 import sys
+import ctypes
+
+# ── 控制台分配 ─────────────────────────────────
+# 如果命令行包含 --console，则为进程分配一个控制台窗口，
+# 并将 stdout/stderr 重定向到该控制台（主要用于打包 exe 后调试）。
+if "--console" in sys.argv:
+    kernel32 = ctypes.windll.kernel32
+    if not kernel32.AllocConsole():
+        # 如果分配失败（例如已有控制台），让程序继续运行
+        pass
+    else:
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        sys._console_allocated = True
+    sys.argv.remove("--console")
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from app.logger import get_logger

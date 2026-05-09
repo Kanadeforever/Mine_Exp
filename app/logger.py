@@ -70,8 +70,8 @@ def get_logger(name: str) -> logging.Logger:
     if _file_handler is not None:
         logger.addHandler(_file_handler)
 
-    # 控制台 Handler（仅在非打包模式输出）
-    if not getattr(sys, 'frozen', False):
+    # 控制台 Handler（非打包模式，或打包后通过 --console 分配了控制台）
+    if not getattr(sys, 'frozen', False) or getattr(sys, '_console_allocated', False):
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(logging.DEBUG)
         ch.setFormatter(logging.Formatter(_FORMAT, _DATE_FMT))

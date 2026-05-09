@@ -4,7 +4,7 @@ cd /d "%~dp0"
 call venv\Scripts\activate.bat
 
 pyinstaller --onedir --noconsole ^
-    --name "ExplorerSessionSaver" ^
+    --name "MineExp" ^
     --clean ^
     --icon "app/resources/icon.ico" ^
     --add-data "language;language" ^
@@ -13,7 +13,7 @@ pyinstaller --onedir --noconsole ^
 
 if %ERRORLEVEL% equ 0 (
     echo.
-    echo Build success! exe is at dist\ExplorerSessionSaver.exe
+    echo Build success! exe is at dist\MineExp.exe
     echo.
     echo NOTE: Session/ and language/ are auto-initialized at first run.
 ) else (
