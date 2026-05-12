@@ -1,13 +1,15 @@
 <p align="center">
-  <strong>中文</strong>
-  &nbsp;|&nbsp;
-  <a href="./README.md">English</a>
+  <strong>中文</strong> | <a href="./README.md">English</a>
 </p>
 
 <h1 align="center">Mine Exp</h1>
 
 <p align="center">
   <em>快捷键保存与恢复 Windows 资源管理器窗口会话</em>
+</p>
+
+<p align="center">
+  <em>Powered by DeepSeek V4</em>
 </p>
 
 <p align="center">
