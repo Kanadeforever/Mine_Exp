@@ -1,13 +1,14 @@
 <p align="center">
-  <a href="./README_zh-CN.md">中文</a>
-  &nbsp;|&nbsp;
-  <strong>English</strong>
+  <a href="./README_zh-CN.md">中文</a> | <strong>English</strong>
 </p>
 
 <h1 align="center">Mine Exp</h1>
 
 <p align="center">
   <em>Save & restore Windows File Explorer window sessions with one click</em>
+</p>
+<p align="center">
+  <em>Powered by DeepSeek V4</em>
 </p>
 
 <p align="center">
