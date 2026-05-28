@@ -56,7 +56,6 @@ MOD_NAME_MAP = {
     "Ctrl": MOD_CONTROL, "Shift": MOD_SHIFT,
     "Alt": MOD_ALT, "Win": MOD_WIN,
 }
-REV_MOD_MAP = {v: k for k, v in MOD_NAME_MAP.items()}
 
 
 class HotkeyError(Exception):
@@ -111,6 +110,9 @@ class HotkeyManager:
             if p in MOD_NAME_MAP:
                 mods |= MOD_NAME_MAP[p]
             else:
+                if vk is not None:
+                    logger.warning("Multiple non-modifier keys in hotkey: %s", s)
+                    return 0, None
                 vk = VK_MAP.get(p)
         return mods, vk
 

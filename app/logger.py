@@ -48,11 +48,6 @@ def set_language_manager(lm: Any) -> None:
     _language_manager = lm
 
 
-def get_language_manager() -> Any:
-    """获取语言管理器实例。未设置时返回 None。"""
-    return _language_manager
-
-
 def get_logger(name: str) -> logging.Logger:
     """
     获取（或创建）一个按模块命名的 Logger。
@@ -101,6 +96,13 @@ def configure_logging(enabled: bool, max_entries: int) -> None:
     _max_entries = max(max_entries, LOG_MAX_ENTRIES_MIN)
 
     if enabled:
+        # 清理旧的 handler（如果存在），防止句柄泄漏
+        if _file_handler is not None:
+            for logger_obj in _get_all_loggers():
+                logger_obj.removeHandler(_file_handler)
+            _file_handler.close()
+            _file_handler = None
+
         # 创建带时间戳的新日志文件
         timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         log_file = LOG_DIR / f"{_LOG_PREFIX}{timestamp}.log"

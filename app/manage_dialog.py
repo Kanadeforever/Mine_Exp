@@ -23,11 +23,12 @@ from PyQt6.QtWidgets import (
     QListWidget, QPushButton, QMessageBox, QInputDialog,
     QAbstractItemView, QListWidgetItem,
 )
-from PyQt6.QtCore import Qt, QDir
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 
 import json
 import re
+import subprocess
 
 from app.language_manager import LanguageManager
 from app import session_manager as sm
@@ -193,6 +194,8 @@ class ManageDialog(QDialog):
                 data = json.loads(path.read_text("utf-8"))
                 if isinstance(data, list):
                     for item in data:
+                        if not isinstance(item, dict):
+                            continue
                         p = item.get("Path", "")
                         if p:
                             paths.append(p)
@@ -203,12 +206,16 @@ class ManageDialog(QDialog):
     def _build_tooltip(self, name: str, count: int) -> str:
         """构建会话列表项的 tooltip（显示前 5 条窗口路径）"""
         paths = self._get_session_window_paths(name)
-        lines = [f"会话: {name}", f"窗口数: {count}", ""]
+        lines = [
+            f"{self._lm.t('ManageSessions', 'SessionLabel')}: {name}",
+            f"{self._lm.t('ManageSessions', 'WindowCountLabel')}: {count}",
+            ""
+        ]
         display = paths[:5]
         for p in display:
             lines.append(p)
         if len(paths) > 5:
-            lines.append(f"... 还有 {len(paths) - 5} 个窗口")
+            lines.append(self._lm.t("ManageSessions", "MoreLabel", str(len(paths) - 5)))
         return "\n".join(lines)
 
     def refresh(self):
@@ -397,7 +404,7 @@ class ManageDialog(QDialog):
 
         msg = self._lm.t("ManageSessions", "Confirm", names[0])
         if len(names) > 1:
-            msg += f"\n({len(names)} items selected)"
+            msg += self._lm.t("ManageSessions", "MultiSelectHint", str(len(names)))
         ret = QMessageBox.question(
             self, self._lm.t("ManageSessions", "ConfirmTitle"),
             msg,
@@ -550,7 +557,17 @@ class ManageDialog(QDialog):
 
     def open_folder(self):
         """在资源管理器中打开会话存储目录"""
-        import subprocess
-        folder = str(sm.SESSION_DIR)
-        subprocess.Popen(["explorer", folder])
-        logger.info("Opened session folder: %s", folder)
+        folder = sm.SESSION_DIR
+        if not folder.exists():
+            logger.warning("Session folder does not exist: %s", folder)
+            QMessageBox.warning(
+                self, self._lm.t("General", "Error"),
+                self._lm.t("ManageSessions", "FolderNotFound"))
+            return
+        try:
+            subprocess.Popen(["explorer", str(folder)])
+            logger.info("Opened session folder: %s", folder)
+        except Exception as e:
+            logger.error("Failed to open folder: %s", e)
+            QMessageBox.warning(
+                self, self._lm.t("General", "Error"), str(e))

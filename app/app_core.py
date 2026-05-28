@@ -3,17 +3,15 @@ app_core.py
 核心逻辑：系统托盘 + 全局热键 + 会话管理 + 自动保存，无主窗口。
 """
 
-import sys
 import atexit
 import json
-from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu,
     QMessageBox, QWidget, QStyle, QProgressDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtGui import QIcon
 
 from app.language_manager import LanguageManager
 from app import session_manager as sm
@@ -24,18 +22,17 @@ from app.logger import get_logger, set_language_manager, configure_logging
 from app.hotkey_manager import HotkeyManager, WinHotkeyFilter
 from app.constants import (
     NOTIFY_DURATION_NORMAL, NOTIFY_DURATION_ERROR,
-    STARTUP_NOTIFICATION_DELAY, WORKER_TERMINATE_WAIT,
+    STARTUP_NOTIFICATION_DELAY,
     AUTOSAVE_SESSION_PREFIX,
 )
 
 logger = get_logger(__name__)
-LANG_DIR = LANGUAGE_DIR
 
 
 class RestoreWorker(QThread):
     """异步恢复工作线程（恢复整个会话）"""
     progress = pyqtSignal(int, int, str)
-    finished = pyqtSignal(int, int)
+    finished = pyqtSignal(int, int, list)
     error = pyqtSignal(str)
 
     def __init__(self, session_name: str):
@@ -44,11 +41,12 @@ class RestoreWorker(QThread):
 
     def run(self):
         try:
-            succ, fail = sm.restore_session(
+            succ, fail, failed_paths = sm.restore_session(
                 self._name,
-                progress_callback=lambda s, f, p: self.progress.emit(s, f, p)
+                progress_callback=lambda s, f, p: self.progress.emit(s, f, p),
+                cancel_check=self.isInterruptionRequested,
             )
-            self.finished.emit(succ, fail)
+            self.finished.emit(succ, fail, failed_paths)
         except sm.SessionError as e:
             self.error.emit(str(e))
         except Exception as e:
@@ -59,7 +57,7 @@ class RestoreWorker(QThread):
 class RestorePartialWorker(QThread):
     """异步恢复工作线程（恢复会话中部分窗口）"""
     progress = pyqtSignal(int, int, str)
-    finished = pyqtSignal(int, int)
+    finished = pyqtSignal(int, int, list)
     error = pyqtSignal(str)
 
     def __init__(self, session_name: str, indices: list[int]):
@@ -69,12 +67,13 @@ class RestorePartialWorker(QThread):
 
     def run(self):
         try:
-            succ, fail = sm.restore_windows_from_session(
+            succ, fail, failed_paths = sm.restore_windows_from_session(
                 self._name,
                 self._indices,
-                progress_callback=lambda s, f, p: self.progress.emit(s, f, p)
+                progress_callback=lambda s, f, p: self.progress.emit(s, f, p),
+                cancel_check=self.isInterruptionRequested,
             )
-            self.finished.emit(succ, fail)
+            self.finished.emit(succ, fail, failed_paths)
         except sm.SessionError as e:
             self.error.emit(str(e))
         except Exception as e:
@@ -89,7 +88,7 @@ class AppCore(QObject):
         super().__init__()
         # ── 配置和语言 ──
         self._cfg = load_config()
-        self._lang_mgr = LanguageManager(LANG_DIR, self._cfg["Language"])
+        self._lang_mgr = LanguageManager(LANGUAGE_DIR, self._cfg["Language"])
         set_language_manager(self._lang_mgr)
 
         # ── 日志系统初始化 ──
@@ -106,6 +105,7 @@ class AppCore(QObject):
         self._auto_save_timer = QTimer(self)
         self._auto_save_timer.timeout.connect(self._auto_save)
         self._last_snapshot = None
+        self._worker = None
         self._start_auto_save_timer()
 
         # ── 系统托盘（不连接 activated 信号，完全由原生 setContextMenu 处理右键）──
@@ -185,8 +185,7 @@ class AppCore(QObject):
         try:
             # 获取所有 auto_ 前缀的会话文件，按修改时间排序（旧 → 新）
             auto_files = sorted(
-                [f for f in SESSION_DIR.glob(f"{AUTOSAVE_SESSION_PREFIX}*.json")
-                 if f.stem.startswith(AUTOSAVE_SESSION_PREFIX)],
+                [f for f in SESSION_DIR.glob(f"{AUTOSAVE_SESSION_PREFIX}*.json")],
                 key=lambda p: p.stat().st_mtime
             )
             if len(auto_files) <= max_count:
@@ -218,17 +217,17 @@ class AppCore(QObject):
             self._lang_mgr.t("Tray", "Tooltip") or "ExplorerSessionSaver")
 
         menu = QMenu()
-        save_a = menu.addAction(self._lang_mgr.t("Tray", "Save"))
-        save_a.triggered.connect(self.save_session)
-        restore_a = menu.addAction(self._lang_mgr.t("Tray", "Restore"))
-        restore_a.triggered.connect(self._restore_latest)
-        manage_a = menu.addAction(self._lang_mgr.t("Tray", "Manage"))
-        manage_a.triggered.connect(self.manage_sessions)
-        settings_a = menu.addAction(self._lang_mgr.t("Tray", "Settings"))
-        settings_a.triggered.connect(self.open_settings)
+        self._save_action = menu.addAction(self._lang_mgr.t("Tray", "Save"))
+        self._save_action.triggered.connect(self.save_session)
+        self._restore_action = menu.addAction(self._lang_mgr.t("Tray", "Restore"))
+        self._restore_action.triggered.connect(self._restore_latest)
+        self._manage_action = menu.addAction(self._lang_mgr.t("Tray", "Manage"))
+        self._manage_action.triggered.connect(self.manage_sessions)
+        self._settings_action = menu.addAction(self._lang_mgr.t("Tray", "Settings"))
+        self._settings_action.triggered.connect(self.open_settings)
         menu.addSeparator()
-        quit_a = menu.addAction(self._lang_mgr.t("Tray", "Quit"))
-        quit_a.triggered.connect(self.quit_app)
+        self._quit_action = menu.addAction(self._lang_mgr.t("Tray", "Quit"))
+        self._quit_action.triggered.connect(self.quit_app)
         self.tray_icon.setContextMenu(menu)
         # 不连接 activated 信号，避免与原生右键菜单冲突 → 根治双菜单问题
         self.tray_icon.show()
@@ -265,9 +264,8 @@ class AppCore(QObject):
                 logger.info("Native event filter installed")
             except Exception as e:
                 logger.warning("Failed to install native filter: %s", e)
-
-        # 注册 atexit 清理回调，替代不可靠的 __del__
-        atexit.register(self._cleanup)
+            else:
+                atexit.register(self._cleanup)
 
     def _cleanup(self):
         """atexit 注册的清理函数，确保热键被注销"""
@@ -288,8 +286,18 @@ class AppCore(QObject):
             logger.info("Session saved: %s (%d windows)", name, count)
         except sm.SessionError as e:
             logger.error("Save session failed: %s", e)
+            self.tray_icon.showMessage(
+                self._lang_mgr.t("General", "Error"),
+                str(e),
+                QSystemTrayIcon.MessageIcon.Critical,
+                NOTIFY_DURATION_ERROR)
         except Exception as e:
             logger.exception("Unexpected error saving session: %s", e)
+            self.tray_icon.showMessage(
+                self._lang_mgr.t("General", "Error"),
+                str(e),
+                QSystemTrayIcon.MessageIcon.Critical,
+                NOTIFY_DURATION_ERROR)
 
     def _restore_latest(self):
         """快速恢复（最新会话）"""
@@ -312,6 +320,10 @@ class AppCore(QObject):
 
     def _restore(self, name: str):
         """使用 QThread 异步恢复 + 进度对话框"""
+        if self._worker is not None and self._worker.isRunning():
+            logger.warning("Restore already in progress, ignoring request")
+            return
+
         progress = QProgressDialog(
             self._lang_mgr.t("Main", "RestoringProgress", name),
             self._lang_mgr.t("General", "Cancel"),
@@ -326,7 +338,7 @@ class AppCore(QObject):
         self._worker.progress.connect(
             lambda s, f, p: self._on_restore_progress(progress, s, f, p))
         self._worker.finished.connect(
-            lambda s, f: self._on_restore_done(progress, name, s, f))
+            lambda s, f, fps: self._on_restore_done(progress, name, s, f, fps))
         self._worker.error.connect(
             lambda e: self._on_restore_error(progress, name, e))
         self._worker.finished.connect(self._worker.deleteLater)
@@ -336,6 +348,10 @@ class AppCore(QObject):
 
     def _restore_partial(self, name: str, indices: list[int]):
         """使用 QThread 异步恢复部分窗口 + 进度对话框"""
+        if self._worker is not None and self._worker.isRunning():
+            logger.warning("Restore already in progress, ignoring request")
+            return
+
         progress = QProgressDialog(
             self._lang_mgr.t("Main", "RestoringProgress", name),
             self._lang_mgr.t("General", "Cancel"),
@@ -350,7 +366,7 @@ class AppCore(QObject):
         self._worker.progress.connect(
             lambda s, f, p: self._on_restore_progress(progress, s, f, p))
         self._worker.finished.connect(
-            lambda s, f: self._on_restore_done(progress, name, s, f))
+            lambda s, f, fps: self._on_restore_done(progress, name, s, f, fps))
         self._worker.error.connect(
             lambda e: self._on_restore_error(progress, name, e))
         self._worker.finished.connect(self._worker.deleteLater)
@@ -363,15 +379,11 @@ class AppCore(QObject):
         progress.setValue(success + failed)
 
     def _on_restore_cancel(self):
-        if hasattr(self, '_worker') and self._worker.isRunning():
+        if self._worker is not None and self._worker.isRunning():
             self._worker.requestInterruption()
-            self._worker.wait(WORKER_TERMINATE_WAIT)
-            if self._worker.isRunning():
-                self._worker.terminate()
-                self._worker.wait()
-            logger.info("Restore cancelled")
+            logger.info("Restore cancellation requested")
 
-    def _on_restore_done(self, progress: QProgressDialog, name: str, success: int, failed: int):
+    def _on_restore_done(self, progress: QProgressDialog, name: str, success: int, failed: int, failed_paths: list[str]):
         progress.close()
         msg = self._lang_mgr.t("Main", "Restored", str(success), str(failed))
         self.tray_icon.showMessage(
@@ -380,6 +392,18 @@ class AppCore(QObject):
             QSystemTrayIcon.MessageIcon.Information,
             NOTIFY_DURATION_NORMAL)
         logger.info("Session restored: %s (%d/%d)", name, success, failed)
+        if failed_paths:
+            self._show_failed_paths_dialog(failed_paths)
+        self._worker = None
+
+    def _show_failed_paths_dialog(self, failed_paths: list[str]):
+        title = self._lang_mgr.t("Main", "SkippedPathsTitle")
+        header = self._lang_mgr.t("Main", "SkippedPathsHeader", str(len(failed_paths)))
+        display = failed_paths[:20]
+        detail = "\n".join(display)
+        if len(failed_paths) > 20:
+            detail += "\n" + self._lang_mgr.t("Main", "MoreLabel", str(len(failed_paths) - 20))
+        QMessageBox.warning(None, title, f"{header}\n\n{detail}")
 
     def _on_restore_error(self, progress: QProgressDialog, name: str, error_msg: str):
         progress.close()
@@ -389,6 +413,7 @@ class AppCore(QObject):
             error_msg,
             QSystemTrayIcon.MessageIcon.Critical,
             NOTIFY_DURATION_ERROR)
+        self._worker = None
 
     def manage_sessions(self):
         dlg = ManageDialog(
@@ -417,7 +442,7 @@ class AppCore(QObject):
         # 清空事件队列
         QApplication.processEvents()
         try:
-            dlg = SettingsDialog(self._cfg, self._lang_mgr, LANG_DIR)
+            dlg = SettingsDialog(self._cfg, self._lang_mgr, LANGUAGE_DIR)
             result = dlg.exec()
 
             if result == SettingsDialog.DialogCode.Accepted:
@@ -480,20 +505,15 @@ class AppCore(QObject):
     def _reload_language(self):
         """运行时热切换语言"""
         new_lang = self._cfg["Language"]
-        self._lang_mgr = LanguageManager(LANG_DIR, new_lang)
+        self._lang_mgr = LanguageManager(LANGUAGE_DIR, new_lang)
 
-        # 托盘
         self.tray_icon.setToolTip(
             self._lang_mgr.t("Tray", "Tooltip") or "ExplorerSessionSaver")
-        menu = self.tray_icon.contextMenu()
-        if menu:
-            actions = menu.actions()
-            if len(actions) >= 6:
-                actions[0].setText(self._lang_mgr.t("Tray", "Save"))
-                actions[1].setText(self._lang_mgr.t("Tray", "Restore"))
-                actions[2].setText(self._lang_mgr.t("Tray", "Manage"))
-                actions[3].setText(self._lang_mgr.t("Tray", "Settings"))
-                actions[5].setText(self._lang_mgr.t("Tray", "Quit"))
+        self._save_action.setText(self._lang_mgr.t("Tray", "Save"))
+        self._restore_action.setText(self._lang_mgr.t("Tray", "Restore"))
+        self._manage_action.setText(self._lang_mgr.t("Tray", "Manage"))
+        self._settings_action.setText(self._lang_mgr.t("Tray", "Settings"))
+        self._quit_action.setText(self._lang_mgr.t("Tray", "Quit"))
 
         set_language_manager(self._lang_mgr)
         logger.info("Language switched: %s", new_lang)

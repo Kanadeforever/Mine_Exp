@@ -1,6 +1,6 @@
 # 单元测试 — Mine Exp
 
-本项目使用 [pytest](https://docs.pytest.org/) 作为测试框架，共包含 **36 项测试用例**，覆盖核心模块的全部公开函数。
+本项目使用 [pytest](https://docs.pytest.org/) 作为测试框架，共包含 **45 项测试用例**，覆盖核心模块的全部公开函数。
 
 ---
 
@@ -21,15 +21,15 @@ tests/
 
 ## 测试内容总览
 
-### 1. `test_config_manager.py` — 配置管理（11 项）
+### 1. `test_config_manager.py` — 配置管理（10 项）
 
 | 测试类 | 测试用例 | 覆盖内容 |
 |--------|---------|---------|
 | `TestDetectEncoding` | 4 项 | UTF‑8（无 BOM）、UTF‑8‑BOM、UTF‑16 LE、UTF‑16 BE 编码自动检测 |
 | `TestReadIni` | 4 项 | 正常读值、键名大小写保留、文件不存在时返回空字典、BOM 兼容读取 |
-| `TestSaveLoadConfig` | 3 项 | 保存再加载闭环、配置文件缺失时返回默认值 |
+| `TestSaveLoadConfig` | 2 项 | 保存再加载闭环、配置文件缺失时返回默认值 |
 
-### 2. `test_hotkey_manager.py` — 热键验证（7 项）
+### 2. `test_hotkey_manager.py` — 热键验证（5 项）
 
 | 测试类 | 测试用例 | 覆盖内容 |
 |--------|---------|---------|
@@ -41,7 +41,7 @@ tests/
 |--------|---------|---------|
 | `TestLanguageManager` | 6 项 | 中文加载、英文加载、回退机制（不存在的语言 → zh_CN）、缺失键名返回原文、中文参数替换（`%1` `%2`）、英文参数替换 |
 
-### 4. `test_session_manager.py` — 会话管理（12 项）
+### 4. `test_session_manager.py` — 会话管理（24 项）
 
 | 测试类 | 测试用例 | 覆盖内容 |
 |--------|---------|---------|
@@ -50,8 +50,11 @@ tests/
 | `TestSaveSession` | 2 项 | 按名保存创建文件、JSON 内容合法性 |
 | `TestListSessions` | 2 项 | 空列表、按修改时间倒序排列 |
 | `TestDeleteSession` | 2 项 | 删除已存在、删除不存在 |
-| `TestRenameSession` | 4 项 | 重命名成功、同名重命名（不做操作）、重命名不存在（拒绝）、覆盖保护（目标已存在则拒绝） |
+| `TestRenameSession` | 4 项 | 重命名成功、同名重命名、重命名不存在、覆盖保护 |
 | `TestGetLatestSession` | 2 项 | 获取最新会话、无会话返回 None |
+| `TestGetSessionWindows` | 3 项 | 获取窗口列表、会话不存在、无效 JSON |
+| `TestDeleteWindowFromSession` | 3 项 | 删除窗口、索引越界、会话不存在 |
+| `TestUpdateWindowPath` | 3 项 | 更新路径、会话不存在、索引越界 |
 
 ---
 

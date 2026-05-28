@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mine-exp"
+version = "1.0.0"
+description = "Windows Explorer 窗口会话保存/恢复工具"
+requires-python = ">=3.10"
+dependencies = [
+    "pywin32>=311",
+    "PyQt6>=6.11.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pyinstaller>=6.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

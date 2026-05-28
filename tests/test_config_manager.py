@@ -66,7 +66,7 @@ class TestSaveLoadConfig:
             "AutoSaveInterval": "30",
             "AutoSaveMaxCount": "10",
             "LogEnabled": "true",
-            "LogMaxEntries": "500",
+            "LogMaxEntries": "50",
         }
         save_config(cfg)
         loaded = load_config()

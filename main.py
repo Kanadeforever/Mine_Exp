@@ -23,12 +23,14 @@ if "--console" in sys.argv:
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from app.logger import get_logger
-from app.config_manager import BASE_DIR
+from app.config_manager import BASE_DIR, init_resources
 from app.app_core import AppCore
 
 # ── 启动 ──
 
 def main():
+    init_resources()
+
     logger = get_logger(__name__)
     logger.info("=" * 60)
     logger.info("Application starting...")

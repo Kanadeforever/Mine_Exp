@@ -110,6 +110,8 @@ class HotkeyLineEdit(QLineEdit):
             # 无法识别的键 → 忽略
             return
 
+        if not parts:
+            return  # 至少需要一个修饰键
         parts.append(display)
         combo = "+".join(parts)
         self.setText(combo)

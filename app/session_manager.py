@@ -52,14 +52,16 @@ def _get_shell():
         raise
 
 
-def _init_com():
-    """在当前线程初始化 COM（每个线程只需调用一次）"""
+def _init_com() -> bool:
+    """在当前线程初始化 COM。返回 True 表示此调用实际初始化了 COM（需要对应的 CoUninitialize）。"""
     try:
         pythoncom.CoInitialize()
+        return True
     except pythoncom.com_error:
-        pass
+        return False
     except Exception as e:
         logger.warning("Unexpected COM init error: %s", e)
+        return False
 
 
 def session_path(name: str) -> Path:
@@ -77,8 +79,7 @@ def _wait_for_window_hwnd(path: str, timeout: float = WAIT_TIMEOUT, shell=None) 
         shell: 可复用的 Shell.Application 对象。为 None 时内部创建。
     """
     start = time.time()
-    should_release_com = shell is None
-    if should_release_com:
+    if shell is None:
         try:
             shell = win32com.client.Dispatch("Shell.Application")
         except Exception as e:
@@ -123,7 +124,7 @@ def get_open_windows() -> list[dict]:
     返回: [{"Path": str, "Left": int, "Top": int, "Width": int, "Height": int}, ...]
     """
     results = []
-    _init_com()
+    com_initialized = _init_com()
     try:
         shell = _get_shell()
         for w in shell.Windows():
@@ -149,6 +150,9 @@ def get_open_windows() -> list[dict]:
                 continue
     except Exception as e:
         logger.error("Failed to enumerate Explorer windows: %s", e)
+    finally:
+        if com_initialized:
+            pythoncom.CoUninitialize()
     return results
 
 
@@ -238,6 +242,10 @@ def _restore_single_window(
         logger.warning("Skipping empty path at index %d/%d", index, total)
         return False
 
+    if not Path(path_str).exists():
+        logger.info("Skipping non-existent path: %s", path_str)
+        return False
+
     try:
         shell.Open(path_str)
 
@@ -280,18 +288,20 @@ def _restore_single_window(
 def restore_session(
     name: str,
     progress_callback: Callable[[int, int, str], None] | None = None,
-) -> tuple[int, int]:
+    cancel_check: Callable[[], bool] | None = None,
+) -> tuple[int, int, list]:
     """
     恢复指定会话。
     对应 Restore-Session.ps1
     使用轮询替代 sleep(0.3) 等待窗口创建，提高可靠性。
-    
+
     Args:
         name: 会话名称
         progress_callback: 进度回调 (success, failed, current_path)
-        
+        cancel_check: 取消检查回调，返回 True 时停止恢复
+
     Returns:
-        (成功数, 失败数)
+        (成功数, 失败数, 失败路径列表)
     """
     path = session_path(name)
     if not path.exists():
@@ -309,23 +319,34 @@ def restore_session(
     total = len(data)
     logger.info("Restoring session: %s (%d windows)", name, total)
 
-    _init_com()
-    shell = _get_shell()
-    success = 0
-    failed = 0
+    com_initialized = _init_com()
+    try:
+        shell = _get_shell()
+        success = 0
+        failed = 0
+        failed_paths = []
 
-    for idx, item in enumerate(data):
-        ok = _restore_single_window(item, idx + 1, total, shell)
-        if ok:
-            success += 1
-        else:
-            failed += 1
-        if progress_callback:
-            path_str = str(item.get("Path", "")) or "(empty)"
-            progress_callback(success, failed, f"[{idx+1}/{total}] {path_str}")
+        for idx, item in enumerate(data):
+            if cancel_check and cancel_check():
+                logger.info("Restore cancelled by user at %d/%d", idx, total)
+                break
+            ok = _restore_single_window(item, idx + 1, total, shell)
+            if ok:
+                success += 1
+            else:
+                failed += 1
+                p = str(item.get("Path", ""))
+                if p:
+                    failed_paths.append(p)
+            if progress_callback:
+                path_str = str(item.get("Path", "")) or "(empty)"
+                progress_callback(success, failed, f"[{idx+1}/{total}] {path_str}")
+    finally:
+        if com_initialized:
+            pythoncom.CoUninitialize()
 
     logger.info("Session restored: %s (%d/%d)", name, success, failed)
-    return success, failed
+    return success, failed, failed_paths
 
 
 def session_exists(name: str) -> bool:
@@ -408,15 +429,17 @@ def restore_windows_from_session(
     name: str,
     indices: list[int],
     progress_callback: Callable[[int, int, str], None] | None = None,
-) -> tuple[int, int]:
+    cancel_check: Callable[[], bool] | None = None,
+) -> tuple[int, int, list]:
     """
     恢复会话中指定索引的窗口。
     Args:
         name: 会话名称
         indices: 要恢复的窗口索引列表
         progress_callback: 进度回调 (success, failed, current_path)
+        cancel_check: 取消检查回调，返回 True 时停止恢复
     Returns:
-        (成功数, 失败数)
+        (成功数, 失败数, 失败路径列表)
     """
     path = session_path(name)
     if not path.exists():
@@ -431,7 +454,6 @@ def restore_windows_from_session(
     if not isinstance(all_data, list):
         raise SessionError(f"Invalid session data: {name}")
 
-    # 按 indices 提取要恢复的项目
     data = []
     for idx in indices:
         if 0 <= idx < len(all_data):
@@ -439,27 +461,38 @@ def restore_windows_from_session(
 
     total = len(data)
     if total == 0:
-        return 0, 0
+        return 0, 0, []
 
     logger.info("Restoring %d windows from session %s", total, name)
 
-    _init_com()
-    shell = _get_shell()
-    success = 0
-    failed = 0
+    com_initialized = _init_com()
+    try:
+        shell = _get_shell()
+        success = 0
+        failed = 0
+        failed_paths = []
 
-    for idx, item in enumerate(data):
-        ok = _restore_single_window(item, idx + 1, total, shell)
-        if ok:
-            success += 1
-        else:
-            failed += 1
-        if progress_callback:
-            path_str = str(item.get("Path", "")) or "(empty)"
-            progress_callback(success, failed, f"[{idx+1}/{total}] {path_str}")
+        for idx, item in enumerate(data):
+            if cancel_check and cancel_check():
+                logger.info("Restore cancelled by user at %d/%d", idx, total)
+                break
+            ok = _restore_single_window(item, idx + 1, total, shell)
+            if ok:
+                success += 1
+            else:
+                failed += 1
+                p = str(item.get("Path", ""))
+                if p:
+                    failed_paths.append(p)
+            if progress_callback:
+                path_str = str(item.get("Path", "")) or "(empty)"
+                progress_callback(success, failed, f"[{idx+1}/{total}] {path_str}")
+    finally:
+        if com_initialized:
+            pythoncom.CoUninitialize()
 
     logger.info("Session restored: %s (%d/%d)", name, success, failed)
-    return success, failed
+    return success, failed, failed_paths
 
 
 def update_window_path(name: str, index: int, new_path: str) -> bool:
