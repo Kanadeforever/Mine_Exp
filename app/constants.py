@@ -14,6 +14,9 @@ WAIT_TIMEOUT = 5.0          # 等待窗口创建超时（秒）
 WAIT_INTERVAL = 0.05        # 轮询间隔（秒）
 MIN_VISIBLE_WIDTH = 200     # 窗口可见最小宽度（像素）
 MIN_VISIBLE_HEIGHT = 150    # 窗口可见最小高度（像素）
+STAGGER_OFFSET_X = 30       # 窗口级联偏移 X
+STAGGER_OFFSET_Y = 30       # 窗口级联偏移 Y
+MAX_WINDOW_SIZE_RATIO = 0.9 # 窗口最大占工作区比例
 
 # ── 托盘通知持续时间（毫秒） ─────────────────────────
 NOTIFY_DURATION_NORMAL = 3000    # 普通通知

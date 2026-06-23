@@ -13,6 +13,7 @@ session_manager.py
 import json
 import ctypes
 import ctypes.wintypes
+import os
 import time
 from pathlib import Path
 from datetime import datetime
@@ -28,12 +29,32 @@ from app.constants import (
     SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
     WAIT_TIMEOUT, WAIT_INTERVAL,
     MIN_VISIBLE_WIDTH, MIN_VISIBLE_HEIGHT,
+    STAGGER_OFFSET_X, STAGGER_OFFSET_Y,
+    MAX_WINDOW_SIZE_RATIO,
 )
 
 logger = get_logger(__name__)
 
 # ─── Win32 ─────────────────────────────────────────────
 _USER32 = ctypes.windll.user32
+_USER32.FindWindowExW.restype = ctypes.wintypes.HWND
+_USER32.MonitorFromPoint.restype = ctypes.wintypes.HANDLE
+_USER32.GetForegroundWindow.restype = ctypes.wintypes.HWND
+_MONITOR_DEFAULTTONULL = 0x00000000
+
+class _RECT(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long), ("top", ctypes.c_long),
+        ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+    ]
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_ulong),
+        ("rcMonitor", _RECT),
+        ("rcWork", _RECT),
+        ("dwFlags", ctypes.c_ulong),
+    ]
 
 
 class SessionError(Exception):
@@ -93,7 +114,7 @@ def _wait_for_window_hwnd(path: str, timeout: float = WAIT_TIMEOUT, shell=None) 
                     if folder is None:
                         continue
                     self_path = str(folder.Folder.Self.Path)
-                    if self_path != path:
+                    if not _paths_equal(self_path, path):
                         continue
                     hwnd = int(w.HWND)
                     if hwnd != 0 and _USER32.IsWindow(ctypes.wintypes.HWND(hwnd)):
@@ -106,6 +127,136 @@ def _wait_for_window_hwnd(path: str, timeout: float = WAIT_TIMEOUT, shell=None) 
         time.sleep(WAIT_INTERVAL)
     logger.warning("Timeout waiting for HWND for path: %s", path)
     return None
+
+
+def _sanitize_window_rect(left: int, top: int, width: int, height: int) -> tuple[int, int, int, int]:
+    """修正窗口坐标和尺寸，处理多屏缺失/DPI变更"""
+    center_x, center_y = left + width // 2, top + height // 2
+    monitor = _USER32.MonitorFromPoint(
+        ctypes.wintypes.POINT(center_x, center_y), _MONITOR_DEFAULTTONULL)
+    if monitor == 0:
+        primary_w = _USER32.GetSystemMetrics(0)
+        primary_h = _USER32.GetSystemMetrics(1)
+        max_w = max(MIN_VISIBLE_WIDTH, int(primary_w * MAX_WINDOW_SIZE_RATIO))
+        max_h = max(MIN_VISIBLE_HEIGHT, int(primary_h * MAX_WINDOW_SIZE_RATIO))
+        width = max(MIN_VISIBLE_WIDTH, min(width, max_w))
+        height = max(MIN_VISIBLE_HEIGHT, min(height, max_h))
+        left, top = max(0, (primary_w - width) // 2), max(0, (primary_h - height) // 2)
+    else:
+        mi = _MONITORINFO()
+        mi.cbSize = ctypes.sizeof(_MONITORINFO)
+        _USER32.GetMonitorInfoW(monitor, ctypes.byref(mi))
+        work_w = mi.rcWork.right - mi.rcWork.left
+        work_h = mi.rcWork.bottom - mi.rcWork.top
+        max_w = max(MIN_VISIBLE_WIDTH, int(work_w * MAX_WINDOW_SIZE_RATIO))
+        max_h = max(MIN_VISIBLE_HEIGHT, int(work_h * MAX_WINDOW_SIZE_RATIO))
+        width = max(MIN_VISIBLE_WIDTH, min(width, max_w))
+        height = max(MIN_VISIBLE_HEIGHT, min(height, max_h))
+    virt_left = _USER32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+    virt_top = _USER32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+    virt_width = _USER32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+    virt_height = _USER32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+    left = max(virt_left, min(left, virt_left + virt_width - max(width, MIN_VISIBLE_WIDTH)))
+    top = max(virt_top, min(top, virt_top + virt_height - max(height, MIN_VISIBLE_HEIGHT)))
+    return left, top, width, height
+
+
+def _paths_equal(a: str, b: str) -> bool:
+    """比较两个路径（处理 UNC、尾部斜杠差异）"""
+    if a == b:
+        return True
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except Exception:
+        return os.path.normcase(a.rstrip("\\")) == os.path.normcase(b.rstrip("\\"))
+
+
+def _path_accessible(path_str: str) -> bool:
+    """检查路径是否可访问（网络/UNC/shell路径跳过检查）"""
+    if not path_str:
+        return False
+    if path_str.startswith("shell") or path_str.startswith("\\\\"):
+        return True
+    if len(path_str) >= 2 and path_str[1] == ":":
+        drive = path_str[:2] + "\\"
+        if ctypes.windll.kernel32.GetDriveTypeW(drive) == 4:  # DRIVE_REMOTE
+            return True
+    return Path(path_str).exists()
+
+
+def _ensure_group_ids(data: list[dict]) -> list[dict]:
+    """为无 GroupId 的旧 Session 分配组 ID。坐标完全相同 → 同组。"""
+    coord_to_gid = {}
+    next_gid = 1
+    for entry in data:
+        if "GroupId" in entry:
+            continue
+        key = (entry.get("Left"), entry.get("Top"), entry.get("Width"), entry.get("Height"))
+        if key not in coord_to_gid:
+            coord_to_gid[key] = next_gid
+            next_gid += 1
+        entry["GroupId"] = coord_to_gid[key]
+    return data
+
+
+def _make_navigate_target(path_str: str):
+    """为 Navigate2 准备参数：普通路径直接传字符串，特殊路径用 Folder 对象"""
+    if "\\" in path_str:
+        simple = path_str.replace("\\", "\\\\")
+    else:
+        simple = path_str
+    try:
+        shell_app = win32com.client.Dispatch("Shell.Application")
+        folder = shell_app.NameSpace(path_str)
+        if folder is not None:
+            return folder
+    except Exception:
+        pass
+    return simple
+
+
+def _try_open_as_tab(path_str: str, target_hwnd: int, shell) -> bool:
+    """在 target_hwnd 窗口中创建新标签页并导航。成功返回 True，失败不留垃圾标签页。"""
+    tab_hwnd = _USER32.FindWindowExW(ctypes.wintypes.HWND(target_hwnd), 0, "ShellTabWindowClass", None)
+    if not tab_hwnd:
+        return False
+    before = set()
+    for w in shell.Windows():
+        try:
+            before.add((int(w.HWND), str(w.LocationURL)))
+        except Exception:
+            pass
+    _USER32.PostMessageW(tab_hwnd, 0x111, 0xA21B, 0)
+    for _ in range(10):  # 0.5s
+        time.sleep(0.05)
+        for w in shell.Windows():
+            try:
+                key = (int(w.HWND), str(w.LocationURL))
+                if key not in before:
+                    target = _make_navigate_target(path_str)
+                    w.Navigate2(target)
+                    time.sleep(0.25)
+                    try:
+                        actual = str(w.LocationURL) if w.LocationURL else ""
+                        if _paths_equal(_normalize_location_url(actual), path_str):
+                            return True
+                    except Exception:
+                        pass
+                    _USER32.PostMessageW(tab_hwnd, 0x111, 0xA021, 1)  # Ctrl+W
+                    return False
+            except Exception:
+                continue
+    return False
+
+
+def _normalize_location_url(url: str) -> str:
+    """将 LocationURL 转为可比路径"""
+    import urllib.parse
+    if url.startswith("file:///"):
+        return urllib.parse.unquote(url[8:]).replace("/", "\\")
+    if url.startswith("file:"):
+        return urllib.parse.unquote(url[5:]).replace("/", "\\")
+    return url
 
 
 # ─── 会话文件名（带时间戳） ──────────────────────────
@@ -121,12 +272,14 @@ def get_open_windows() -> list[dict]:
     """
     获取所有打开的 Explorer 窗口信息。
     对应 Get-ExplorerSessions.ps1
-    返回: [{"Path": str, "Left": int, "Top": int, "Width": int, "Height": int}, ...]
+    返回: [{"Path": str, "Left": int, "Top": int, "Width": int, "Height": int, "GroupId": int}, ...]
     """
     results = []
     com_initialized = _init_com()
     try:
         shell = _get_shell()
+        hwnd_to_gid: dict[int, int] = {}
+        next_gid = 1
         for w in shell.Windows():
             try:
                 folder = w.Document
@@ -135,15 +288,19 @@ def get_open_windows() -> list[dict]:
                 self_path = folder.Folder.Self.Path
                 if self_path is None:
                     continue
+                hwnd = int(w.HWND)
+                if hwnd not in hwnd_to_gid:
+                    hwnd_to_gid[hwnd] = next_gid
+                    next_gid += 1
                 results.append({
                     "Path": str(self_path),
                     "Left": int(getattr(w, "Left", 0)),
                     "Top": int(getattr(w, "Top", 0)),
                     "Width": int(getattr(w, "Width", 0)),
                     "Height": int(getattr(w, "Height", 0)),
+                    "GroupId": hwnd_to_gid[hwnd],
                 })
             except AttributeError:
-                # 非资源管理器窗口（IE、控制面板等）跳过
                 continue
             except Exception as e:
                 logger.warning("Error reading window info: %s", e)
@@ -219,69 +376,59 @@ def delete_session(name: str) -> bool:
     return False
 
 
-def _restore_single_window(
-    item: dict,
-    index: int,
-    total: int,
-    shell,
-) -> bool:
-    """
-    恢复单个窗口（提取自 restore_session / restore_windows_from_session 的公共逻辑）。
-    
-    Args:
-        item: 窗口数据字典（包含 Path, Left, Top, Width, Height）
-        index: 当前进度索引（1-based，用于日志）
-        total: 总窗口数（用于日志）
-        shell: 复用的 Shell.Application COM 对象
-        
-    Returns:
-        bool: 恢复成功返回 True
-    """
-    path_str = str(item.get("Path", ""))
-    if not path_str:
-        logger.warning("Skipping empty path at index %d/%d", index, total)
-        return False
-
-    if not Path(path_str).exists():
-        logger.info("Skipping non-existent path: %s", path_str)
-        return False
-
-    try:
-        shell.Open(path_str)
-
-        hwnd = _wait_for_window_hwnd(path_str, shell=shell)
-        if hwnd is None:
-            logger.warning("Timeout waiting for HWND for %s", path_str)
-            return False
-
-        left = int(item.get("Left", 0))
-        top = int(item.get("Top", 0))
+def _restore_group_items(items: list[dict], shell) -> tuple[list[int], list[int]]:
+    """恢复同一组条目。第一个开窗口，后续尝试 Tab 创建，失败则独立窗口 + stagger。"""
+    success, failed = [], []
+    main_hwnd = None
+    for i, item in enumerate(items):
+        path_str = str(item.get("Path", ""))
+        if not path_str:
+            failed.append(i); continue
+        if not _path_accessible(path_str):
+            logger.info("Skipping inaccessible path: %s", path_str)
+            failed.append(i); continue
+        left = int(item.get("Left", 0)) + i * STAGGER_OFFSET_X
+        top = int(item.get("Top", 0)) + i * STAGGER_OFFSET_Y
         width = int(item.get("Width", 800))
         height = int(item.get("Height", 600))
+        left, top, width, height = _sanitize_window_rect(left, top, width, height)
+        if i == 0:
+            try:
+                shell.Open(path_str)
+                hwnd = _wait_for_window_hwnd(path_str, shell=shell)
+                if hwnd is None:
+                    failed.append(i); continue
+                main_hwnd = hwnd
+                _USER32.SetWindowPos(ctypes.wintypes.HWND(hwnd), ctypes.wintypes.HWND(0),
+                    ctypes.c_int(left), ctypes.c_int(top), ctypes.c_int(width), ctypes.c_int(height),
+                    ctypes.c_uint(0x0040 | 0x0010))
+                success.append(i)
+            except Exception as e:
+                logger.warning("Failed to restore window %s: %s", path_str, e)
+                failed.append(i)
+            continue
+        if _try_open_as_tab(path_str, main_hwnd, shell):
+            success.append(i)
+        elif _try_open_window(path_str, left, top, width, height, shell):
+            success.append(i)
+        else:
+            failed.append(i)
+    return success, failed
 
-        # ── 坐标修正：将窗口 clamp 到虚拟桌面范围内 ──
-        virt_left = _USER32.GetSystemMetrics(SM_XVIRTUALSCREEN)
-        virt_top = _USER32.GetSystemMetrics(SM_YVIRTUALSCREEN)
-        virt_width = _USER32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
-        virt_height = _USER32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
-        left = max(virt_left, min(left, virt_left + virt_width - max(width, MIN_VISIBLE_WIDTH)))
-        top = max(virt_top, min(top, virt_top + virt_height - max(height, MIN_VISIBLE_HEIGHT)))
 
-        ret = _USER32.SetWindowPos(
-            ctypes.wintypes.HWND(hwnd),
-            ctypes.wintypes.HWND(0),  # HWND_TOP
-            ctypes.c_int(left),
-            ctypes.c_int(top),
-            ctypes.c_int(width),
-            ctypes.c_int(height),
-            ctypes.c_uint(0x0040),  # SWP_SHOWWINDOW
-        )
-        if not ret:
-            logger.warning("SetWindowPos failed for %s (hwnd=%d)", path_str, hwnd)
+def _try_open_window(path_str: str, left: int, top: int, width: int, height: int, shell) -> bool:
+    """独立窗口兜底。"""
+    try:
+        shell.Open(path_str)
+        hwnd = _wait_for_window_hwnd(path_str, shell=shell)
+        if hwnd is None:
             return False
+        _USER32.SetWindowPos(ctypes.wintypes.HWND(hwnd), ctypes.wintypes.HWND(0),
+            ctypes.c_int(left), ctypes.c_int(top), ctypes.c_int(width), ctypes.c_int(height),
+            ctypes.c_uint(0x0040 | 0x0010))
         return True
     except Exception as e:
-        logger.warning("Failed to restore window %s: %s", path_str, e)
+        logger.warning("Failed to open window %s: %s", path_str, e)
         return False
 
 
@@ -316,37 +463,51 @@ def restore_session(
     if not isinstance(data, list):
         raise SessionError(f"Invalid session data: {name}")
 
+    data = _ensure_group_ids(data)
+
     total = len(data)
     logger.info("Restoring session: %s (%d windows)", name, total)
+
+    # 按 GroupId 分组（无 GroupId 的条目各自独立成组）
+    groups: list[list[dict]] = []
+    _fallback = -1
+    for item in data:
+        gid = item.get("GroupId")
+        if gid is None:
+            gid = _fallback; _fallback -= 1
+        added = False
+        for g in groups:
+            if g[0].get("GroupId") == gid:
+                g.append(item); added = True; break
+        if not added:
+            groups.append([item])
 
     com_initialized = _init_com()
     try:
         shell = _get_shell()
-        success = 0
-        failed = 0
-        failed_paths = []
-
-        for idx, item in enumerate(data):
+        all_ok, all_fail = 0, 0
+        failed_paths: list[str] = []
+        processed = 0
+        for group in groups:
             if cancel_check and cancel_check():
-                logger.info("Restore cancelled by user at %d/%d", idx, total)
+                logger.info("Restore cancelled at %d/%d", processed, total)
                 break
-            ok = _restore_single_window(item, idx + 1, total, shell)
-            if ok:
-                success += 1
-            else:
-                failed += 1
-                p = str(item.get("Path", ""))
-                if p:
-                    failed_paths.append(p)
+            ok, fail = _restore_group_items(group, shell)
+            all_ok += len(ok); all_fail += len(fail)
+            for fi in fail:
+                p = str(group[fi].get("Path", ""))
+                if p: failed_paths.append(p)
+            processed += len(group)
             if progress_callback:
-                path_str = str(item.get("Path", "")) or "(empty)"
-                progress_callback(success, failed, f"[{idx+1}/{total}] {path_str}")
+                last = group[-1] if group else {}
+                progress_callback(all_ok, all_fail,
+                    f"[{processed}/{total}] {last.get('Path', '') or '(empty)'}")
     finally:
         if com_initialized:
             pythoncom.CoUninitialize()
 
-    logger.info("Session restored: %s (%d/%d)", name, success, failed)
-    return success, failed, failed_paths
+    logger.info("Session restored: %s (%d/%d)", name, all_ok, all_fail)
+    return all_ok, all_fail, failed_paths
 
 
 def session_exists(name: str) -> bool:
@@ -465,34 +626,46 @@ def restore_windows_from_session(
 
     logger.info("Restoring %d windows from session %s", total, name)
 
+    # 按 GroupId 分组
+    groups: list[list[dict]] = []
+    _fallback = -1
+    for item in data:
+        gid = item.get("GroupId")
+        if gid is None:
+            gid = _fallback; _fallback -= 1
+        added = False
+        for g in groups:
+            if g[0].get("GroupId") == gid:
+                g.append(item); added = True; break
+        if not added:
+            groups.append([item])
+
     com_initialized = _init_com()
     try:
         shell = _get_shell()
-        success = 0
-        failed = 0
-        failed_paths = []
-
-        for idx, item in enumerate(data):
+        all_ok, all_fail = 0, 0
+        failed_paths: list[str] = []
+        processed = 0
+        for group in groups:
             if cancel_check and cancel_check():
-                logger.info("Restore cancelled by user at %d/%d", idx, total)
+                logger.info("Restore cancelled at %d/%d", processed, total)
                 break
-            ok = _restore_single_window(item, idx + 1, total, shell)
-            if ok:
-                success += 1
-            else:
-                failed += 1
-                p = str(item.get("Path", ""))
-                if p:
-                    failed_paths.append(p)
+            ok, fail = _restore_group_items(group, shell)
+            all_ok += len(ok); all_fail += len(fail)
+            for fi in fail:
+                p = str(group[fi].get("Path", ""))
+                if p: failed_paths.append(p)
+            processed += len(group)
             if progress_callback:
-                path_str = str(item.get("Path", "")) or "(empty)"
-                progress_callback(success, failed, f"[{idx+1}/{total}] {path_str}")
+                last = group[-1] if group else {}
+                progress_callback(all_ok, all_fail,
+                    f"[{processed}/{total}] {last.get('Path', '') or '(empty)'}")
     finally:
         if com_initialized:
             pythoncom.CoUninitialize()
 
-    logger.info("Session restored: %s (%d/%d)", name, success, failed)
-    return success, failed, failed_paths
+    logger.info("Session restored: %s (%d/%d)", name, all_ok, all_fail)
+    return all_ok, all_fail, failed_paths
 
 
 def update_window_path(name: str, index: int, new_path: str) -> bool:
