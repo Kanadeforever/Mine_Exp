@@ -215,6 +215,6 @@ pytest tests/ -v
 
 ---
 
-## Special Thanks
+## Acknowledgments
 
 - DeepSeek — The existence that lends people wings
