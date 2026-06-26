@@ -214,3 +214,7 @@ pytest tests/ -v
 | PyInstaller | Application packaging |
 
 ---
+
+## Special Thanks
+
+- DeepSeek — The existence that lends people wings
