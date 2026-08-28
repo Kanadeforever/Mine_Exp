@@ -1,0 +1,24 @@
+# 自定义
+__pycache__/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+.vscode/
+.idea/
+logs/
+Session/
+.cc-history/
+.claude/
+参考项目/
+
+*.spec
+config.ini
+Thumbs.db
+.DS_Store
+.mcp.json
+*.py[cod]
+CLAUDE.md
+AGENTS.md
