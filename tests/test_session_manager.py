@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 import pytest
+import app.session_manager as sm
 from app.session_manager import (
     generate_session_name,
     session_exists,
@@ -174,3 +175,136 @@ class TestUpdateWindowPath:
     def test_update_path_out_of_range(self, session_dir):
         session_path("oor").write_text("[]", encoding="utf-8")
         assert update_window_path("oor", 0, "C:\\new") is False
+
+
+class _FakeSelf:
+    def __init__(self, path: str):
+        self.Path = path
+
+
+class _FakeFolder:
+    def __init__(self, path: str):
+        self.Self = _FakeSelf(path)
+
+
+class _FakeDocument:
+    def __init__(self, path: str):
+        self.Folder = _FakeFolder(path)
+
+
+class _FakeBrowser:
+    def __init__(self, hwnd: int, path: str, url: str | None = None):
+        self.HWND = hwnd
+        self.Document = _FakeDocument(path)
+        self.LocationURL = url if url is not None else path
+        self.Busy = False
+        self.navigated_to = None
+
+    def Navigate2(self, target):
+        self.navigated_to = target
+        path = str(target)
+        self.Document = _FakeDocument(path)
+        self.LocationURL = path
+
+
+class _FakeShell:
+    def __init__(self, windows: list[_FakeBrowser]):
+        self.windows = windows
+        self.opened = []
+
+    def Windows(self):
+        return list(self.windows)
+
+    def Open(self, path: str):
+        self.opened.append(path)
+
+    def NameSpace(self, _path: str):
+        return None
+
+
+class TestAccurateRestore:
+    def test_minimized_placeholder_size_uses_normal_fallback(self):
+        assert sm._fallback_window_size(160, 28) == (1200, 800)
+        assert sm._fallback_window_size(900, 700) == (900, 700)
+
+    def test_wait_for_new_window_ignores_existing_same_path(self, monkeypatch):
+        old = _FakeBrowser(100, "C:\\same")
+        new = _FakeBrowser(200, "C:\\same")
+        shell = _FakeShell([old, new])
+        monkeypatch.setattr(sm, "_is_valid_window", lambda _hwnd: True)
+
+        hwnd = sm._wait_for_window_hwnd(
+            "C:\\same", timeout=0.1, shell=shell, existing_hwnds={100})
+
+        assert hwnd == 200
+
+    def test_new_tab_is_selected_only_from_target_window(self, monkeypatch):
+        target_old = _FakeBrowser(200, "C:\\first")
+        other_old = _FakeBrowser(300, "C:\\other")
+        shell = _FakeShell([target_old, other_old])
+        wrong_new = _FakeBrowser(300, "Home", "new-other")
+        target_new = _FakeBrowser(200, "Home", "new-target")
+
+        class FakeUser32:
+            def PostMessageW(self, _hwnd, _message, command, _param):
+                if command == sm._NEW_TAB_COMMAND:
+                    shell.windows.extend([wrong_new, target_new])
+                return 1
+
+        monkeypatch.setattr(sm, "_USER32", FakeUser32())
+        monkeypatch.setattr(sm, "_wait_for_tab_host", lambda _hwnd, timeout: 500)
+        monkeypatch.setattr(sm.time, "sleep", lambda _seconds: None)
+
+        assert sm._try_open_as_tab("C:\\target", 200, shell) is True
+        assert target_new.navigated_to == "C:\\target"
+        assert wrong_new.navigated_to is None
+
+    def test_failed_tab_is_not_restored_as_separate_window(self, monkeypatch):
+        shell = _FakeShell([])
+        items = [
+            {"Path": "C:\\first", "GroupId": 1},
+            {"Path": "C:\\second", "GroupId": 1},
+        ]
+        observed = {}
+        monkeypatch.setattr(sm, "_path_accessible", lambda _path: True)
+        monkeypatch.setattr(sm, "_capture_explorer_hwnds", lambda _shell: {100})
+
+        def wait_for_new(path, timeout=sm.WAIT_TIMEOUT, shell=None, existing_hwnds=None):
+            observed["existing"] = existing_hwnds
+            return 200
+
+        monkeypatch.setattr(sm, "_wait_for_window_hwnd", wait_for_new)
+        monkeypatch.setattr(sm, "_apply_window_geometry", lambda _hwnd, _item: None)
+        monkeypatch.setattr(sm, "_wait_for_first_window_ready", lambda *_args: True)
+        monkeypatch.setattr(sm, "_try_open_as_tab", lambda *_args: False)
+
+        success, failed = sm._restore_group_items(items, shell)
+
+        assert shell.opened == ["C:\\first"]
+        assert observed["existing"] == {100}
+        assert success == [0]
+        assert failed == [1]
+
+    def test_geometry_is_captured_once_for_all_tabs_in_group(self, monkeypatch):
+        shell = _FakeShell([
+            _FakeBrowser(200, "C:\\first"),
+            _FakeBrowser(200, "C:\\second"),
+        ])
+        calls = []
+        geometry = {
+            "Left": 10, "Top": 20, "Width": 900, "Height": 700,
+            "ShowCmd": 3, "GeometryReliable": True,
+        }
+        monkeypatch.setattr(sm, "_init_com", lambda: False)
+        monkeypatch.setattr(sm, "_get_shell", lambda: shell)
+        monkeypatch.setattr(
+            sm, "_capture_window_geometry",
+            lambda hwnd, _browser: calls.append(hwnd) or geometry,
+        )
+
+        windows = sm.get_open_windows()
+
+        assert calls == [200]
+        assert [item["Path"] for item in windows] == ["C:\\first", "C:\\second"]
+        assert all(item["ShowCmd"] == 3 for item in windows)
+        assert windows[0]["GroupId"] == windows[1]["GroupId"]

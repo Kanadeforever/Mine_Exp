@@ -9,7 +9,8 @@ description = "Windows Explorer 窗口会话保存/恢复工具"
 requires-python = ">=3.10"
 dependencies = [
     "pywin32>=311",
-    "PyQt6>=6.11.0",
+    "PyQt6==6.11.0",
+    "PyQt6-Qt6==6.11.2",
 ]
 
 [project.optional-dependencies]
