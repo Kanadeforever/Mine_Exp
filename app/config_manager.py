@@ -70,6 +70,7 @@ def _validate_bool(value: str, default: bool) -> bool:
 
 DEFAULT_CONFIG = {
     "Language": "zh_CN",
+    "KeepRestoreMenuOpen": "false",
     "SaveSession": "Ctrl+Shift+S",
     "QuickRestore": "Ctrl+Shift+R",
     "AutoSaveEnabled": "true",
@@ -89,6 +90,8 @@ def load_config() -> dict:
         raw = read_ini(CONFIG_FILE)
         if "General" in raw:
             cfg["Language"] = raw["General"].get("Language", "zh_CN")
+            cfg["KeepRestoreMenuOpen"] = raw["General"].get(
+                "KeepRestoreMenuOpen", "false")
         if "Hotkeys" in raw:
             cfg["SaveSession"] = raw["Hotkeys"].get("SaveSession", "Ctrl+Shift+S")
             cfg["QuickRestore"] = raw["Hotkeys"].get("QuickRestore", "Ctrl+Shift+R")
@@ -115,6 +118,8 @@ def load_config() -> dict:
         LOG_DEFAULT_MAX_ENTRIES, LOG_MAX_ENTRIES_MIN, LOG_MAX_ENTRIES_MAX))
     cfg["AutoSaveEnabled"] = "true" if _validate_bool(
         cfg.get("AutoSaveEnabled", "true"), True) else "false"
+    cfg["KeepRestoreMenuOpen"] = "true" if _validate_bool(
+        cfg.get("KeepRestoreMenuOpen", "false"), False) else "false"
     cfg["LogEnabled"] = "true" if _validate_bool(
         cfg.get("LogEnabled", "true"), True) else "false"
     return cfg
@@ -125,6 +130,7 @@ def save_config(cfg: dict):
         cp = _IniParser()
         cp.add_section("General")
         cp.set("General", "Language", cfg["Language"])
+        cp.set("General", "KeepRestoreMenuOpen", cfg["KeepRestoreMenuOpen"])
         cp.add_section("Hotkeys")
         cp.set("Hotkeys", "SaveSession", cfg["SaveSession"])
         cp.set("Hotkeys", "QuickRestore", cfg["QuickRestore"])

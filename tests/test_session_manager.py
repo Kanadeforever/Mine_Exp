@@ -223,6 +223,27 @@ class _FakeShell:
 
 
 class TestAccurateRestore:
+    @pytest.mark.parametrize("path", [
+        "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
+        "shell:Downloads",
+        "SHELL:Downloads",
+    ])
+    def test_shell_namespace_paths_are_accessible(self, path):
+        assert sm._path_accessible(path) is True
+
+    def test_shell_namespace_path_reaches_shell_open(self, monkeypatch):
+        path = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"
+        shell = _FakeShell([])
+        monkeypatch.setattr(sm, "_capture_explorer_hwnds", lambda _shell: set())
+        monkeypatch.setattr(sm, "_wait_for_window_hwnd", lambda *_args, **_kwargs: 200)
+        monkeypatch.setattr(sm, "_apply_window_geometry", lambda *_args: None)
+
+        success, failed = sm._restore_group_items([{"Path": path}], shell)
+
+        assert shell.opened == [path]
+        assert success == [0]
+        assert failed == []
+
     def test_minimized_placeholder_size_uses_normal_fallback(self):
         assert sm._fallback_window_size(160, 28) == (1200, 800)
         assert sm._fallback_window_size(900, 700) == (900, 700)

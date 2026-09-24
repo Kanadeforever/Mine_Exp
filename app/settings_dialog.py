@@ -157,6 +157,12 @@ class SettingsDialog(QDialog):
         self.lang_combo.setCurrentIndex(idx)
         fl.addRow(self._lm.t("Settings", "LangLabel") + ":", self.lang_combo)
 
+        self.keep_restore_menu_open_cb = QCheckBox(
+            self._lm.t("Settings", "KeepRestoreMenuOpen"))
+        self.keep_restore_menu_open_cb.setChecked(
+            self._cfg.get("KeepRestoreMenuOpen", "false").lower() == "true")
+        gl.addWidget(self.keep_restore_menu_open_cb)
+
         # ── 自动保存组 ──
         gl.addSpacing(16)
 
@@ -247,6 +253,8 @@ class SettingsDialog(QDialog):
     def get_config(self) -> dict:
         return {
             "Language": self.lang_combo.currentText(),
+            "KeepRestoreMenuOpen": (
+                "true" if self.keep_restore_menu_open_cb.isChecked() else "false"),
             "SaveSession": self.hk_save.text(),
             "QuickRestore": self.hk_quick.text(),
             "AutoSaveEnabled": "true" if self.auto_save_cb.isChecked() else "false",

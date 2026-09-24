@@ -395,7 +395,9 @@ def _path_accessible(path_str: str) -> bool:
     """检查路径是否可访问（网络/UNC/shell路径跳过检查）"""
     if not path_str:
         return False
-    if path_str.startswith("shell") or path_str.startswith("\\\\"):
+    normalized = path_str.lstrip().lower()
+    if (normalized.startswith("shell:") or normalized.startswith("::")
+            or path_str.startswith("\\\\")):
         return True
     if len(path_str) >= 2 and path_str[1] == ":":
         drive = path_str[:2] + "\\"

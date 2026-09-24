@@ -229,8 +229,13 @@ class AppCore(QObject):
         self._quit_action = menu.addAction(self._lang_mgr.t("Tray", "Quit"))
         self._quit_action.triggered.connect(self.quit_app)
         self.tray_icon.setContextMenu(menu)
-        # 不连接 activated 信号，避免与原生右键菜单冲突 → 根治双菜单问题
+        self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        """双击托盘图标时打开会话恢复菜单；右键仍由原生菜单处理。"""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.manage_sessions()
 
     # ── 全局热键 ───────────────────────────────────────
 
@@ -420,6 +425,8 @@ class AppCore(QObject):
             self._lang_mgr,
             on_restore_session=self._restore,
             on_restore_windows=self._restore_partial,
+            close_after_restore=(
+                self._cfg.get("KeepRestoreMenuOpen", "false").lower() != "true"),
         )
         dlg.exec()
 

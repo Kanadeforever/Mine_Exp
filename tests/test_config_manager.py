@@ -60,6 +60,7 @@ class TestSaveLoadConfig:
         monkeypatch.setattr("app.config_manager.CONFIG_FILE", tmp_path / "config.ini")
         cfg = {
             "Language": "en_US",
+            "KeepRestoreMenuOpen": "true",
             "SaveSession": "Alt+1",
             "QuickRestore": "Alt+2",
             "AutoSaveEnabled": "true",
@@ -77,4 +78,5 @@ class TestSaveLoadConfig:
         # file doesn't exist → should return defaults
         loaded = load_config()
         assert loaded["Language"] == "zh_CN"
+        assert loaded["KeepRestoreMenuOpen"] == "false"
         assert loaded["SaveSession"] == "Ctrl+Shift+S"

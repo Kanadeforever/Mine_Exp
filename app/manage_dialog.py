@@ -46,12 +46,14 @@ class ManageDialog(QDialog):
         lang_mgr: LanguageManager,
         on_restore_session=None,
         on_restore_windows=None,
+        close_after_restore=True,
         parent=None,
     ):
         super().__init__(parent)
         self._lm = lang_mgr
         self._on_restore_session = on_restore_session      # callable(name) -> None
         self._on_restore_windows = on_restore_windows      # callable(name, indices) -> None
+        self._close_after_restore = close_after_restore
         self._sessions = []
 
         # ── 层级状态 ──
@@ -340,11 +342,12 @@ class ManageDialog(QDialog):
         self.refresh()
 
     def _restore_single_window(self, index: int):
-        """恢复单个窗口并关闭对话框"""
+        """恢复单个窗口，并按设置决定是否关闭对话框。"""
         name = self._current_session_name
         if not name:
             return
-        self.accept()
+        if self._close_after_restore:
+            self.accept()
         if self._on_restore_windows:
             self._on_restore_windows(name, [index])
 
@@ -365,7 +368,8 @@ class ManageDialog(QDialog):
                     self, self._lm.t("ManageSessions", "RestoreTitle"),
                     self._lm.t("ManageSessions", "SelectSingleSession"))
                 return
-            self.accept()
+            if self._close_after_restore:
+                self.accept()
             if self._on_restore_session:
                 self._on_restore_session(names[0])
             else:
@@ -381,7 +385,8 @@ class ManageDialog(QDialog):
             name = self._current_session_name
             if not name:
                 return
-            self.accept()
+            if self._close_after_restore:
+                self.accept()
             if self._on_restore_windows:
                 self._on_restore_windows(name, indices)
 

@@ -1,19 +1,19 @@
 @echo off
-chcp 936 >nul
-rem ���õ�ǰĿ¼Ϊ�ű�����Ŀ¼
+chcp 65001 >nul
+rem 设置当前目录为脚本所在目录
 cd /d "%~dp0"
 
-rem �������⻷��
+rem 激活虚拟环境
 call ".\.venv\Scripts\activate"
 
 color 06
-echo ���⻷����������
+echo 虚拟环境已启动！
 echo.
 
 python --version
 echo.
 
-rem ��������ڿ���
+rem 保持命令窗口开启
 cmd /k
 
 @echo on
