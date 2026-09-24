@@ -244,6 +244,30 @@ class TestAccurateRestore:
         assert success == [0]
         assert failed == []
 
+    def test_drive_path_is_delegated_to_shell_when_pathlib_cannot_see_it(self):
+        assert sm._path_accessible("Z:\\komgalibrary\\Manga\\Doujinshi") is True
+
+    def test_restore_reuses_already_open_path_when_no_new_window_appears(
+        self, monkeypatch,
+    ):
+        path = "Z:\\komgalibrary\\Manga\\Doujinshi"
+        existing = _FakeBrowser(100, path)
+        shell = _FakeShell([existing])
+        applied = []
+        monkeypatch.setattr(sm, "_is_valid_window", lambda _hwnd: True)
+        monkeypatch.setattr(sm, "_wait_for_window_hwnd", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            sm, "_apply_window_geometry",
+            lambda hwnd, _item: applied.append(hwnd),
+        )
+
+        success, failed = sm._restore_group_items([{"Path": path}], shell)
+
+        assert shell.opened == [path]
+        assert applied == [100]
+        assert success == [0]
+        assert failed == []
+
     def test_minimized_placeholder_size_uses_normal_fallback(self):
         assert sm._fallback_window_size(160, 28) == (1200, 800)
         assert sm._fallback_window_size(900, 700) == (900, 700)

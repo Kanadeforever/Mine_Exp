@@ -50,6 +50,7 @@ _FIRST_WINDOW_READY_TIMEOUT = 10.0
 _FIRST_WINDOW_STABLE_DURATION = 1.2
 _TAB_CREATE_TIMEOUT = 3.0
 _TAB_NAVIGATE_TIMEOUT = 3.5
+_EXISTING_WINDOW_REUSE_TIMEOUT = 1.5
 _GEOMETRY_REAPPLY_DELAY = 0.65
 _MIN_RELIABLE_WINDOW_WIDTH = 480
 _MIN_RELIABLE_WINDOW_HEIGHT = 320
@@ -392,18 +393,34 @@ def _paths_equal(a: str, b: str) -> bool:
 
 
 def _path_accessible(path_str: str) -> bool:
-    """检查路径是否可访问（网络/UNC/shell路径跳过检查）"""
+    """判断路径是否值得交给 Windows Shell 尝试打开。"""
     if not path_str:
         return False
     normalized = path_str.lstrip().lower()
     if (normalized.startswith("shell:") or normalized.startswith("::")
             or path_str.startswith("\\\\")):
         return True
-    if len(path_str) >= 2 and path_str[1] == ":":
-        drive = path_str[:2] + "\\"
-        if ctypes.windll.kernel32.GetDriveTypeW(drive) == 4:  # DRIVE_REMOTE
-            return True
+    # 映射盘、SUBST 和虚拟文件系统可能对 Path.exists() 不可见，
+    # 但 Explorer 仍能打开。绝对盘符路径应以 Shell 的实际打开结果为准。
+    if len(path_str) >= 3 and path_str[1] == ":" and path_str[2] in "\\/":
+        return True
     return Path(path_str).exists()
+
+
+def _find_existing_window_hwnd(path_str: str, shell, hwnds: set[int]) -> int | None:
+    """在恢复前已有的 Explorer 窗口/标签中查找目标路径。"""
+    try:
+        for window in shell.Windows():
+            try:
+                hwnd = int(window.HWND)
+                if (hwnd in hwnds and _is_valid_window(hwnd)
+                        and _browser_matches_path(window, path_str)):
+                    return hwnd
+            except Exception:
+                continue
+    except Exception as e:
+        logger.debug("Error finding existing Explorer window: %s", e)
+    return None
 
 
 def _ensure_group_ids(data: list[dict]) -> list[dict]:
@@ -746,9 +763,22 @@ def _restore_group_items(
         existing_hwnds = _capture_explorer_hwnds(shell)
         if existing_hwnds is None:
             return success, list(range(len(items)))
+        existing_hwnd = _find_existing_window_hwnd(
+            first_path, shell, existing_hwnds)
         shell.Open(first_path)
         hwnd = _wait_for_window_hwnd(
-            first_path, shell=shell, existing_hwnds=existing_hwnds)
+            first_path,
+            timeout=(
+                min(WAIT_TIMEOUT, _EXISTING_WINDOW_REUSE_TIMEOUT)
+                if existing_hwnd is not None else WAIT_TIMEOUT),
+            shell=shell,
+            existing_hwnds=existing_hwnds,
+        )
+        reused_existing = False
+        if hwnd is None and existing_hwnd is not None and _is_valid_window(existing_hwnd):
+            hwnd = existing_hwnd
+            reused_existing = True
+            logger.info("Reusing existing Explorer window for path: %s", first_path)
         if hwnd is None:
             return success, list(range(len(items)))
         _apply_window_geometry(hwnd, first)
@@ -759,7 +789,8 @@ def _restore_group_items(
         logger.warning("Failed to restore window %s: %s", first_path, e)
         return success, list(range(len(items)))
 
-    if len(items) > 1 and not _wait_for_first_window_ready(shell, hwnd, first_path):
+    if (len(items) > 1 and not reused_existing
+            and not _wait_for_first_window_ready(shell, hwnd, first_path)):
         logger.warning("First Explorer window did not become ready: %s", first_path)
         return success, list(range(1, len(items)))
 
